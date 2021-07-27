@@ -14,64 +14,83 @@ namespace AutoMLApp
         private const int Width = 114;
 
         private static readonly string BaseDatasetsRelativePath = @"../../../datasets";
+        //табличка(формат .tsv) с данными для обучения модели
         private static readonly string TrainDataRelativePath = $"{BaseDatasetsRelativePath}/wikipedia-detox-250-line-data.tsv";
+        //табличка(формат .tsv) с данными для тестирования модели
         private static readonly string TestDataRelativePath = $"{BaseDatasetsRelativePath}/wikipedia-detox-250-line-test.tsv";
+        //находим абсолютные пути до таблиц
         private static string TrainDataPath = GetAbsolutePath(TrainDataRelativePath);
         private static string TestDataPath = GetAbsolutePath(TestDataRelativePath);
 
+        //папка, куда будем сохранять модель
         private static readonly string BaseModelsRelativePath = @"../../../MLModels";
-        private static readonly string ModelRelativePath = $"{BaseModelsRelativePath}/SentimentModel.zip";
+        //задаем путь и имя модели, которую получим после обучения
+        private static readonly string ModelRelativePath = $"{BaseModelsRelativePath}/AutoML_Classification.zip";
         private static string ModelPath = GetAbsolutePath(ModelRelativePath);
 
+        //задаем время эксперимента
         private static uint ExperimentTime = 60;
 
         static void Main(string[] args)
         {
+            //Общий контекст для всех операций ML.NET.
+            //Будучи созданным пользователем, он предоставляет способ создания компонентов
+            //для подготовки данных, функций, обучения, прогнозирования и оценки модели.
             var mlContext = new MLContext();
 
-            // Create, train, evaluate and save a model
+            //Создание, обучение и сохранение модели
+            //возвращает натренированную модель
             BuildTrainEvaluateAndSaveModel(mlContext);
 
-            // Make a single test prediction loading the model from .ZIP file
+            //Создание прогноза при загрузке модели из .ZIP файла
             TestSinglePrediction(mlContext);
 
+            //Демонстрация окончания выполнения приложения
             Console.WriteLine("=============== End of process, hit any key to finish ===============");
             Console.ReadKey();
         }
 
+        //Создание, обучение и сохранение модели
         private static ITransformer BuildTrainEvaluateAndSaveModel(MLContext mlContext)
         {
-            // STEP 1: Load data
+            //используем ранее созданные директории нахождения табличек с данными и загружаем их в интерфейс
             IDataView trainingDataView = mlContext.Data.LoadFromTextFile<SentimentIssue>(TrainDataPath, hasHeader: true);
             IDataView testDataView = mlContext.Data.LoadFromTextFile<SentimentIssue>(TestDataPath, hasHeader: true);
 
-            // STEP 2: Display first few rows of training data
-            ShowDataViewInConsole(mlContext, trainingDataView);
+            //выводим на консоль первые 4 строчки таблицы для обучения модели
+            ShowDataViewInConsole(mlContext, trainingDataView, 4);
 
-            // STEP 3: Initialize our user-defined progress handler that AutoML will 
-            // invoke after each model it produces and evaluates.
+            //создаем handler для отображения прогресса выполнения алгоритма классификации
+            //на консоль будет поочередно выводится имя метрик, их прогресс и время выполнения эксперимента (обучения)
             var progressHandler = new BinaryExperimentProgressHandler();
 
-            // STEP 4: Run AutoML binary classification experiment
+            //начало выполнения алгоритма классификации
             ConsoleWriteHeader("=============== Running AutoML experiment ===============");
+            //выводим на консоль время выполнения эксперимента
             Console.WriteLine($"Running AutoML binary classification experiment for {ExperimentTime} seconds...");
+
+            // ExperimentResult - результат эксперимента AutoML
+            // BinaryClassificationMetrics - тип метрик для эксперимента
+            // создаем эксперимент с заданным временем - ExperimentTime
+            // выбираем для обучение таблицу, выбранную ранее
+            // указываем обработчик для отображения прогресса выполнения эксперимента
             ExperimentResult<BinaryClassificationMetrics> experimentResult = mlContext.Auto()
                 .CreateBinaryClassificationExperiment(ExperimentTime)
                 .Execute(trainingDataView, progressHandler: progressHandler);
 
-            // Print top models found by AutoML
-            Console.WriteLine();
-            PrintTopModels(experimentResult);
 
-            // STEP 5: Evaluate the model and print metrics
+            // оценка модели
             ConsoleWriteHeader("=============== Evaluating model's accuracy with test data ===============");
+            // RunDetail - класс с метриками того, как обученная модель работала с данными проверки во время запуска
             RunDetail<BinaryClassificationMetrics> bestRun = experimentResult.BestRun;
+            // создаем преобразователь данных
             ITransformer trainedModel = bestRun.Model;
+            // используем тестовую табличку, чтобы создать прогнозы на ее основе
             var predictions = trainedModel.Transform(testDataView);
             var metrics = mlContext.BinaryClassification.EvaluateNonCalibrated(data: predictions, scoreColumnName: "Score");
             PrintBinaryClassificationMetrics(bestRun.TrainerName, metrics);
 
-            // STEP 6: Save/persist the trained model to a .ZIP file
+            // сохраняем модель в архиве
             mlContext.Model.Save(trainedModel, trainingDataView.Schema, ModelPath);
 
             Console.WriteLine("The model is saved to {0}", ModelPath);
@@ -79,16 +98,17 @@ namespace AutoMLApp
             return trainedModel;
         }
 
-        // (OPTIONAL) Try/test a single prediction by loading the model from the file, first.
+        // протестируем строчку с помощью созданной моделью
         private static void TestSinglePrediction(MLContext mlContext)
         {
-            ConsoleWriteHeader("=============== Testing prediction engine ===============");
-            SentimentIssue sampleStatement = new SentimentIssue { Text = "This is a very rude movie" };
+            ConsoleWriteHeader("=============== Testing prediction ===============");
+            //создаем строчку, помещаем в колонку Text
+            SentimentIssue sampleStatement = new SentimentIssue { Text = "Today was the worst day ever" };
 
+            //ищем модель по ране созданному пути 
             ITransformer trainedModel = mlContext.Model.Load(ModelPath, out var modelInputSchema);
-            Console.WriteLine($"=============== Loaded Model OK  ===============");
 
-            // Create prediction engine related to the loaded trained model
+            //создаем прогноз 
             var predEngine = mlContext.Model.CreatePredictionEngine<SentimentIssue, SentimentPrediction>(trainedModel);
             Console.WriteLine($"=============== Created Prediction Engine OK  ===============");
             // Score
@@ -109,20 +129,7 @@ namespace AutoMLApp
             return fullPath;
         }
 
-        /// <summary>
-        /// Prints top models from AutoML experiment.
-        /// </summary>
-        private static void PrintTopModels(ExperimentResult<BinaryClassificationMetrics> experimentResult)
-        {
-            // Get top few runs ranked by accuracy
-            var topRuns = experimentResult.RunDetails
-                .Where(r => r.ValidationMetrics != null && !double.IsNaN(r.ValidationMetrics.Accuracy))
-                .OrderByDescending(r => r.ValidationMetrics.Accuracy).Take(3);
-
-            Console.WriteLine("Top models ranked by accuracy --");
-        }
-
-        public static void ShowDataViewInConsole(MLContext mlContext, IDataView dataView, int numberOfRows = 4)
+        public static void ShowDataViewInConsole(MLContext mlContext, IDataView dataView, int numberOfRows)
         {
             string msg = string.Format("Show data in DataView: Showing {0} rows with the columns", numberOfRows.ToString());
             ConsoleWriteHeader(msg);
@@ -164,8 +171,6 @@ namespace AutoMLApp
             Console.WriteLine($"*       Area Under Curve:      {metrics.AreaUnderRocCurve:P2}");
             Console.WriteLine($"*       Area under Precision recall Curve:  {metrics.AreaUnderPrecisionRecallCurve:P2}");
             Console.WriteLine($"*       F1Score:  {metrics.F1Score:P2}");
-            //Console.WriteLine($"*       LogLoss:  {metrics.LogLoss:#.##}");
-            //Console.WriteLine($"*       LogLossReduction:  {metrics.LogLossReduction:#.##}");
             Console.WriteLine($"*       PositivePrecision:  {metrics.PositivePrecision:#.##}");
             Console.WriteLine($"*       PositiveRecall:  {metrics.PositiveRecall:#.##}");
             Console.WriteLine($"*       NegativePrecision:  {metrics.NegativePrecision:#.##}");
